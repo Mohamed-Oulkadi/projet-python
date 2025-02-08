@@ -1,5 +1,3 @@
-
-
 """
 Script de scraping pour trois sites différents :
 1. Jumia.ma (ordinateurs et accessoires informatiques)
@@ -16,6 +14,7 @@ import csv
 from datetime import datetime
 import time
 import random
+import re
 from urllib.parse import urlparse, parse_qs
 
 #########################################
@@ -137,13 +136,13 @@ def scrape_ultrapc():
             
             
             promo_tag = product.find("ul", class_="product-flags")
-            promotions = promo_tag.text.strip() if promo_tag else "No Promotion"
+            promotions = promo_tag.text.strip() if promo_tag else "Aucune"
             
             entry = {
                 "Nom": nom,  # Normalisation : Utilisation de "Nom" au lieu de "Nom du produit"
                 "Prix": prix,
                 "Site web": "UltraPC.ma",
-                "Catégorie": "laptops",
+                "Catégorie": "Laptops",
                 "Date de collecte": datetime.now().strftime("%Y-%m-%d"),
                 "Promotions": promotions,
             }
@@ -157,16 +156,38 @@ def scrape_ultrapc():
 #          Scraping SetupGame.ma        #
 #########################################
 
-# Configuration pour Setup Game
+# Configuration pour SetupGame
 SETUPGAME_BASE_URL = "https://setupgame.ma/categorie-produit/pc-portable/"
 SETUPGAME_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
 }
 
+def parse_price(price_str):
+    """
+    Extrait la valeur numérique d'une chaîne de caractères représentant un prix.
+    Par exemple : "8,999.00MAD" → 8999.00 (float)
+    """
+    if not price_str:
+        return 0.0
+    # Supprime espaces et insécables
+    price_str = price_str.replace("\u202f", "").replace(" ", "")
+    # Supprime les lettres (ex: "MAD")
+    price_str = re.sub(r"[A-Za-z]", "", price_str)
+    # Supprime les virgules servant de séparateur de milliers
+    price_str = price_str.replace(",", "")
+    try:
+        return float(price_str)
+    except ValueError:
+        return 0.0
+
 def scrape_setupgame_page(page_url):
     """
     Récupère les données des produits sur une page donnée de SetupGame.ma
     et les normalise dans le format commun.
+    Pour chaque produit :
+      - Si un prix de vente est disponible, le prix affiché est le prix de vente,
+        et le champ Promotions contiendra le montant de la remise (prix régulier - prix de vente).
+      - Sinon, le prix affiché est le prix régulier et Promotions vaut "Aucune".
     """
     response = requests.get(page_url, headers=SETUPGAME_HEADERS)
     if response.status_code != 200:
@@ -180,22 +201,40 @@ def scrape_setupgame_page(page_url):
         try:
             name_tag_wrapper = product.find('h3', class_='products__name')
             name_tag = name_tag_wrapper.find('a') if name_tag_wrapper else None
-            
-            regular_price = product.find('h3', class_='products__regular-price')
-            sale_price = product.find('h3', class_='products__sale-price')
-            
             nom = name_tag.text.strip() if name_tag else 'Non disponible'
-            # Si un prix de vente est disponible, on le prend ; sinon le prix régulier
-            prix = sale_price.text.strip() if sale_price else (regular_price.text.strip() if regular_price else 'Non disponible')
-            prix_reduit = regular_price.text.strip() if sale_price else ""
+            
+            regular_price_tag = product.find('h3', class_='products__regular-price')
+            sale_price_tag = product.find('h3', class_='products__sale-price')
+            
+            if sale_price_tag:
+                # En cas de promotion, on utilise le prix de vente et on calcule la remise.
+                sale_price_text = sale_price_tag.text.strip()
+                # Si le prix régulier n'est pas trouvé, on considère qu'il est identique au prix de vente.
+                regular_price_text = regular_price_tag.text.strip() if regular_price_tag else sale_price_text
+                
+                sale_price_value = parse_price(sale_price_text)
+                regular_price_value = parse_price(regular_price_text)
+                discount_value = regular_price_value - sale_price_value
+                
+                prix = f"{sale_price_value:.2f} MAD"
+                promotions = f"-{discount_value:.2f} MAD"
+            else:
+                # Pas de promotion : on utilise le prix régulier.
+                if regular_price_tag:
+                    regular_price_text = regular_price_tag.text.strip()
+                    regular_price_value = parse_price(regular_price_text)
+                    prix = f"{regular_price_value:.2f} MAD"
+                else:
+                    prix = "Non disponible"
+                promotions = "Aucune"
             
             entry = {
                 "Nom": nom,
                 "Prix": prix,
                 "Site web": "SetupGame.ma",
-                "Catégorie": "laptops",
+                "Catégorie": "Laptops",
                 "Date de collecte": datetime.now().strftime("%Y-%m-%d"),
-                "Promotions": prix_reduit,
+                "Promotions": promotions,
             }
             page_data.append(entry)
         except Exception as e:

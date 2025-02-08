@@ -1,5 +1,3 @@
-
-
 import re
 import csv
 from datetime import datetime
@@ -17,11 +15,10 @@ CSV_FIELDNAMES = [
 # --- Partie 1 : Normalisation du nom du produit ---
 
 def custom_normalize_product_name(name):
-    
     # Suppression des espaces superflus et des guillemets éventuels
     normalized = name.strip().strip('"')
     
-    # Suppression des détails techniques commençant par " i" suivi d'un chiffre (ex. " i5-8265U/8GB/256GB SSD,")
+    # Suppression des détails techniques commençant par " i" suivi d'un chiffre
     normalized = re.sub(r"\s+i\d[-\w/]*.*$", "", normalized)
     
     # Suppression des suffixes du type " -noir" en fin de chaîne
@@ -35,25 +32,32 @@ def custom_normalize_product_name(name):
     
     return normalized
 
-# --- Partie 2 : Extraction du prix (sans conversion, conservation en MAD) ---
+# --- Partie 2 : Extraction et conversion du prix (toujours en MAD) ---
 
 def extract_price(price_str):
     """
-    Extrait la valeur numérique d'une chaîne de caractères représentant un prix.
-    Par exemple : "1,549.00 Dhs" ou "13,299.00MAD" → 1549.00 ou 13299.00 (float)
+    Extrait la valeur numérique d'une chaîne représentant un prix et renvoie un tuple :
+      (valeur numérique, chaîne formatée en MAD)
+    Par exemple : "1,549.00 Dhs" ou "13,299.00MAD" → (1549.00, "1549.00 MAD")
     """
     if not price_str:
         return None
+
     # Remplacer les espaces insécables et normaux
     price_str = price_str.replace("\u202f", "").replace(" ", "")
-    # Recherche d'un motif numérique
-    match = re.search(r"([\d.,]+)", price_str)
+    
+    # Recherche d'un motif numérique suivi éventuellement de "Dhs" ou "MAD"
+    match = re.search(r"([\d.,]+)\s*(Dhs|MAD)?", price_str, re.IGNORECASE)
+    
     if match:
         num_str = match.group(1)
         # Supprimer les virgules servant de séparateur de milliers
         num_str = num_str.replace(",", "")
+        
         try:
-            return float(num_str)
+            price_value = float(num_str)
+            formatted_price = f"{price_value:.2f} MAD"  # Conversion en MAD
+            return price_value, formatted_price
         except ValueError:
             return None
     return None
@@ -65,12 +69,15 @@ def clean_data(products):
     Parcourt la liste de produits (dictionnaires) et réalise le nettoyage suivant :
       - Suppression des produits dont le nom est vide ou indique "Non disponible".
       - Uniformisation du nom à l'aide de custom_normalize_product_name.
-      - Extraction du prix (en MAD) et stockage dans une clé interne pour la comparaison.
+      - Formatage de la date de collecte au format ISO (YYYY-MM-DD).
+      - Extraction du prix et conversion en MAD.
+      - Application du nettoyage sur le champ Promotions.
+      - Stockage d'une clé interne pour la comparaison du prix lors de la suppression des doublons.
     Retourne la liste nettoyée.
     """
     cleaned = []
     for prod in products:
-        # Récupérer et nettoyer le nom
+        # Récupération et nettoyage du nom
         name = prod.get("Nom", "").strip()
         if not name or name.lower() == "non disponible":
             continue  # Ignorer les enregistrements sans nom pertinent
@@ -78,23 +85,56 @@ def clean_data(products):
         # Uniformiser le nom du produit
         norm_name = custom_normalize_product_name(name)
         
-        # Extraction du prix numérique
-        raw_price = prod.get("Prix", "")
-        price_value = extract_price(raw_price)
+        # Formatage de la date de collecte
+        raw_date = prod.get("Date de collecte", "").strip()
+        formatted_date = raw_date  # Valeur par défaut
+        try:
+            # Tenter d'interpréter la date au format mois/jour/année (ex: "12/8/2024")
+            dt = datetime.strptime(raw_date, "%m/%d/%Y")
+            formatted_date = dt.strftime("%Y-%m-%d")
+        except ValueError:
+            try:
+                # Sinon, tenter le format ISO (ex: "2024-12-08")
+                dt = datetime.strptime(raw_date, "%Y-%m-%d")
+                formatted_date = dt.strftime("%Y-%m-%d")
+            except Exception:
+                formatted_date = raw_date
         
-        # Mise à jour de l'enregistrement avec le nom normalisé et stockage du prix numérique dans une clé interne
+        prod["Date de collecte"] = formatted_date
+
+        # Extraction et conversion du prix
+        raw_price = prod.get("Prix", "")
+        extraction = extract_price(raw_price)
+        if extraction is None:
+            price_numeric = None
+            price_formatted = raw_price  # Conserver la valeur d'origine si extraction impossible
+        else:
+            price_numeric, price_formatted = extraction
+        
+        # Nettoyage du champ Promotions (suppression des espaces insécables et normaux)
+        raw_promotions = prod.get("Promotions", "")
+        promotions_clean = raw_promotions.replace("\u202f", "").replace(" ", "")
+        
+        # Mise à jour de l'enregistrement avec les valeurs nettoyées
         prod["Nom"] = norm_name
-        prod["Prix"] = raw_price  # On conserve la valeur textuelle d'origine (ex: "1,549.00 Dhs")
-        prod["_price_numeric"] = price_value  # Clé interne pour comparaison lors de la suppression des doublons
+        prod["Prix"] = price_formatted  # Exemple : "349.00 MAD"
+        prod["Promotions"] = promotions_clean
+        prod["_price_numeric"] = price_numeric  # Clé interne pour comparaison
         
         cleaned.append(prod)
     return cleaned
 
 def remove_duplicates(products):
+    """
+    Supprime les doublons en gardant pour chaque produit (identifié par le nom normalisé ET la date de collecte)
+    l'enregistrement ayant le prix le plus bas.
     
+    Ainsi, deux enregistrements du même produit avec des dates différentes ne seront pas considérés comme doublons.
+    """
     unique_products = {}
     for prod in products:
-        key = prod["Nom"]
+        # Utiliser comme clé le couple (Nom, Date de collecte)
+        key = (prod["Nom"], prod["Date de collecte"])
         current_price = prod.get("_price_numeric")
         if key in unique_products:
             existing = unique_products[key]
@@ -127,7 +167,7 @@ def export_cleaned_data(products, filename=None):
     Exporte les données nettoyées dans un fichier CSV.
     """
     if filename is None:
-        filename = f"all_products_cleaned_{datetime.now().strftime('%Y%m%d')}.csv"
+        filename = f"all_products_cleaned.csv"
     with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=CSV_FIELDNAMES)
         writer.writeheader()
@@ -137,14 +177,14 @@ def export_cleaned_data(products, filename=None):
 # --- Partie 5 : Pipeline principal ---
 
 def main():
-    input_filename = "all_products.csv"  # Nom du fichier CSV source (à adapter)
+    input_filename = "all_products.csv"  # Nom du fichier CSV source
     print(f"Lecture des données depuis {input_filename}...")
     all_products = read_csv_data(input_filename)
     
     print("Nettoyage des données...")
     cleaned_data = clean_data(all_products)
     
-    print("Suppression des doublons...")
+    print("Suppression des doublons (en tenant compte des dates différentes)...")
     unique_data = remove_duplicates(cleaned_data)
     
     print("Export des données nettoyées...")
