@@ -6,104 +6,109 @@ import seaborn as sns
 sns.set(style="whitegrid")
 
 ###########################################
-# Chargement et nettoyage des données
+# 1. Chargement et nettoyage des données
 ###########################################
 
-# Supposons que vos données nettoyées se trouvent dans un fichier CSV sans entête.
-# Chaque ligne du fichier "products.csv" a le format suivant:
-# Product,Price,Platform,Category,Date,Promotion
-# Par exemple:
-# Logitech K400 Plus Clavier sans Fil Touch TV avec Contrôle Média et Pavé Tactile- Noir,349.00 MAD,Jumia.ma,Keyboards,2024-12-08,-39.00MAD
-df = pd.read_csv('all_products_cleaned.csv', header=None, 
-                 names=["Product", "Price", "Platform", "Category", "Date", "Promotion"])
+# Charger le fichier CSV (assurez-vous que le fichier "all_products_cleaned.csv" se trouve dans le même répertoire)
+df = pd.read_csv('all_products_cleaned.csv')
 
-# Nettoyage de la colonne Price : suppression du "MAD" et conversion en float
-df['Price'] = df['Price'].str.replace(' MAD', '', regex=False).str.replace('MAD', '', regex=False)
-df['Price'] = df['Price'].str.replace(',', '.')  # au cas où des virgules sont utilisées pour les décimales
-df['Price'] = pd.to_numeric(df['Price'], errors='coerce')
+# Vérifiez que le fichier possède bien ces colonnes : 
+# Nom, Prix, Site web, Catégorie, Date de collecte, Promotions
 
-# Fonction pour convertir la colonne Promotion en valeur numérique
+# Nettoyage de la colonne 'Prix'
+df['Prix'] = df['Prix'].str.replace(' MAD', '', regex=False).str.replace('MAD', '', regex=False)
+df['Prix'] = df['Prix'].str.replace(',', '.', regex=False)
+df['Prix'] = pd.to_numeric(df['Prix'], errors='coerce')
+
+# Fonction de conversion pour la colonne 'Promotions'
 def convert_discount(val):
-    if pd.isnull(val) or val.strip() in ['Aucune', '']:
-         return 0.0
-    # Supprimer les espaces et le texte "MAD"
-    val = val.replace('MAD','').replace(' ', '')
-    # Remplacer la virgule par un point (pour les décimales)
-    val = val.replace(',', '.')
+    if pd.isnull(val) or val.strip().lower() == 'aucune' or val.strip() == '':
+        return 0.0
+    # Supprimer "MAD", les espaces et convertir la virgule en point
+    val = val.replace('MAD', '').replace(' ', '').replace(',', '.')
     try:
-         return float(val)
-    except:
-         return 0.0
+        return float(val)
+    except Exception:
+        return 0.0
 
-# Créer une nouvelle colonne 'Discount' à partir de 'Promotion'
-df['Discount'] = df['Promotion'].apply(convert_discount)
+# Créer une nouvelle colonne 'Discount' à partir de 'Promotions'
+df['Discount'] = df['Promotions'].apply(convert_discount)
 
-# Conversion de la colonne Date en type datetime
-df['Date'] = pd.to_datetime(df['Date'], format='%Y-%m-%d', errors='coerce')
+# Conversion de la colonne 'Date de collecte' en type datetime
+df['Date de collecte'] = pd.to_datetime(df['Date de collecte'], format='%Y-%m-%d', errors='coerce')
 
-# Afficher quelques lignes pour vérifier le nettoyage
-print("Aperçu des données nettoyées :")
-print(df.head())
 
 ###########################################
-# 1. Comparaison des prix entre plateformes
+# 2. Comparaison des prix entre plateformes
 ###########################################
 
-# Pour comparer les prix pour un même produit vendu sur différentes plateformes,
-# nous regroupons par produit et plateforme et calculons le prix moyen.
-price_comparison = df.groupby(['Product', 'Platform'])['Price'].mean().reset_index()
-
-# Création d'un tableau croisé : chaque ligne = produit, colonnes = plateformes
-price_pivot = price_comparison.pivot(index='Product', columns='Platform', values='Price')
-
-# Calcul de l'écart de prix pour chaque produit (différence entre le prix max et le prix min)
+# 2.1 Comparaison globale par produit et par site
+price_comparison = df.groupby(['Nom', 'Site web'])['Prix'].mean().reset_index()
+price_pivot = price_comparison.pivot(index='Nom', columns='Site web', values='Prix')
 price_pivot['Price_Ecart'] = price_pivot.max(axis=1) - price_pivot.min(axis=1)
 
-print("\nComparaison des prix (extrait du tableau pivot) :")
-print(price_pivot.head())
 
-# Visualisation : Histogramme des écarts de prix pour les produits disponibles sur plusieurs plateformes
-# On sélectionne uniquement les produits apparaissant sur au moins 2 plateformes (valeurs non nulles)
-price_pivot_valid = price_pivot[price_pivot.notnull().sum(axis=1) > 1]
-
-plt.figure(figsize=(10,6))
-sns.histplot(price_pivot_valid['Price_Ecart'], bins=10, kde=True, color='skyblue')
-plt.title("Histogramme des écarts de prix entre plateformes")
-plt.xlabel("Écart de prix (MAD)")
-plt.ylabel("Nombre de produits")
-plt.show()
+# 2.2 Comparaison par date de collecte (pour les produits présents sur plusieurs plateformes)
+pivot = df.pivot_table(index=['Nom', 'Date de collecte'], columns='Site web', values='Prix', aggfunc='first')
+# Garder uniquement les lignes où au moins 2 plateformes sont renseignées
+pivot = pivot.dropna(thresh=2)
+if pivot.empty:
+    print("Données insuffisantes pour une comparaison entre plusieurs plateformes.")
+else:
+    pivot['Prix_min'] = pivot.min(axis=1)
+    pivot['Prix_max'] = pivot.max(axis=1)
+    pivot['Écart'] = pivot['Prix_max'] - pivot['Prix_min']
+    
+    # Sélectionner les 10 enregistrements avec le plus grand écart de prix
+    top10 = pivot.sort_values(by='Écart', ascending=False).head(10)
+    if top10.empty:
+        print("Aucun enregistrement avec plusieurs plateformes pour comparaison.")
+    else:
+        # Réinitialiser l'index pour combiner Nom et Date de collecte dans un label
+        top10 = top10.reset_index()
+        top10["Produit_date"] = top10["Nom"] + " (" + top10["Date de collecte"].astype(str) + ")"
+        top10 = top10.set_index("Produit_date")
+        # On retire les colonnes de synthèse pour ne garder que les prix par site
+        top10_prices = top10.drop(columns=['Nom', 'Date de collecte', 'Prix_min', 'Prix_max', 'Écart'])
+        
+        # Affichage du diagramme à barres
+        top10_prices.plot(kind='bar', figsize=(12, 8))
+        plt.title("Comparaison des prix sur différentes plateformes\npour les 10 enregistrements avec le plus grand écart")
+        plt.xlabel("Produit (Date de collecte)")
+        plt.ylabel("Prix (MAD)")
+        plt.xticks(rotation=45, ha='right')
+        plt.tight_layout()
+        plt.show()
 
 ###########################################
-# 2. Identification des promotions
+# 3. Identification des promotions
 ###########################################
 
-# a) Déterminer les catégories avec le plus de promotions
-# On considère qu'une promotion est présente si la valeur de Discount est différente de 0.
-promo_counts = df[df['Discount'] != 0].groupby('Category').size().reset_index(name='Promo_Count')
+# 3.a) Compter les promotions par catégorie (Promotion présente si Discount != 0)
+promo_counts = df[df['Discount'] != 0].groupby('Catégorie').size().reset_index(name='Promo_Count')
 
-print("\nNombre de promotions par catégorie :")
-print(promo_counts)
 
-# Visualisation : Diagramme en barres du nombre de promotions par catégorie
+# Diagramme en barres pour le nombre de promotions par catégorie
 plt.figure(figsize=(8,6))
-sns.barplot(data=promo_counts, x='Category', y='Promo_Count', palette="viridis")
+sns.barplot(data=promo_counts, x='Catégorie', y='Promo_Count', hue='Catégorie', palette="viridis", legend=False)
 plt.title("Nombre de promotions par catégorie")
 plt.xlabel("Catégorie")
 plt.ylabel("Nombre de promotions")
 plt.xticks(rotation=45)
+plt.tight_layout()
 plt.show()
 
-# b) Analyse de l’évolution des promotions et des prix dans le temps pour un produit spécifique
-# Par exemple, nous analysons l'évolution pour "LENOVO V15"
+# 3.b) Analyse de l'évolution des prix et des promotions dans le temps pour un produit spécifique
+# Exemple : "LENOVO V15" (recherche non sensible à la casse)
 produit_exemple = "LENOVO V15"
-df_produit = df[df['Product'] == produit_exemple].sort_values('Date')
+df_produit = df[df['Nom'].str.contains(produit_exemple, case=False, na=False)].sort_values('Date de collecte')
 
 if df_produit.empty:
     print(f"\nAucune donnée trouvée pour le produit: {produit_exemple}")
 else:
     plt.figure(figsize=(10,6))
-    plt.plot(df_produit['Date'], df_produit['Price'], marker='o', label='Prix', color='blue')
-    plt.plot(df_produit['Date'], df_produit['Discount'], marker='s', label='Promotion (Discount)', color='red')
+    plt.plot(df_produit['Date de collecte'], df_produit['Prix'], marker='o', label='Prix', color='blue')
+    plt.plot(df_produit['Date de collecte'], df_produit['Discount'], marker='s', label='Promotion (Discount)', color='red')
     plt.title(f"Évolution du prix et des promotions pour\n{produit_exemple}")
     plt.xlabel("Date")
     plt.ylabel("Montant (MAD)")

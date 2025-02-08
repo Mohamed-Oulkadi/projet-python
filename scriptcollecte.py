@@ -1,13 +1,3 @@
-"""
-Script de scraping pour trois sites différents :
-1. Jumia.ma (ordinateurs et accessoires informatiques)
-2. UltraPC.ma (PC portables)
-3. SetupGame.ma (PC portables)
-
-Les données récupérées de chacun de ces sites sont normalisées dans un format commun et
-exportées dans un seul fichier CSV nommé "all_products_<date>.csv".
-"""
-
 import requests
 from bs4 import BeautifulSoup
 import csv
@@ -270,9 +260,9 @@ def export_to_csv(all_data, filename=None):
     Les données doivent être au format commun défini par CSV_FIELDNAMES.
     """
     if filename is None:
-        filename = f"all_products_{datetime.now().strftime('%Y%m%d')}.csv"
+        filename = f"all_products.csv"
     
-    with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
+    with open(filename, 'a', newline='', encoding='utf-8') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=CSV_FIELDNAMES)
         writer.writeheader()
         writer.writerows(all_data)

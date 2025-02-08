@@ -126,15 +126,16 @@ def clean_data(products):
 
 def remove_duplicates(products):
     """
-    Supprime les doublons en gardant pour chaque produit (identifié par le nom normalisé ET la date de collecte)
-    l'enregistrement ayant le prix le plus bas.
+    Supprime les doublons en gardant pour chaque produit (identifié par le nom normalisé,
+    la date de collecte ET le site web) l'enregistrement ayant le prix le plus bas.
     
-    Ainsi, deux enregistrements du même produit avec des dates différentes ne seront pas considérés comme doublons.
+    Ainsi, deux enregistrements du même produit avec des dates ou des sites web différents
+    ne seront pas considérés comme doublons.
     """
     unique_products = {}
     for prod in products:
-        # Utiliser comme clé le couple (Nom, Date de collecte)
-        key = (prod["Nom"], prod["Date de collecte"])
+        # Utiliser comme clé le tuple (Nom, Date de collecte, Site web)
+        key = (prod["Nom"], prod["Date de collecte"], prod["Site web"])
         current_price = prod.get("_price_numeric")
         if key in unique_products:
             existing = unique_products[key]
@@ -167,7 +168,7 @@ def export_cleaned_data(products, filename=None):
     Exporte les données nettoyées dans un fichier CSV.
     """
     if filename is None:
-        filename = f"all_products_cleaned.csv"
+        filename = "all_products_cleaned.csv"
     with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=CSV_FIELDNAMES)
         writer.writeheader()
@@ -177,14 +178,14 @@ def export_cleaned_data(products, filename=None):
 # --- Partie 5 : Pipeline principal ---
 
 def main():
-    input_filename = "all_products.csv"  # Nom du fichier CSV source
+    input_filename = "all_products_20250208.csv"  # Nom du fichier CSV source
     print(f"Lecture des données depuis {input_filename}...")
     all_products = read_csv_data(input_filename)
     
     print("Nettoyage des données...")
     cleaned_data = clean_data(all_products)
     
-    print("Suppression des doublons (en tenant compte des dates différentes)...")
+    print("Suppression des doublons (en tenant compte du nom, de la date de collecte et du site web)...")
     unique_data = remove_duplicates(cleaned_data)
     
     print("Export des données nettoyées...")
